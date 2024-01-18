@@ -6,10 +6,9 @@
 import logo from './logo.png';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
-import { useFetch } from "react-async"
 import { withAuthenticator } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
-import { Amplify, Auth, Storage, API } from "aws-amplify";
+import { Auth, Storage, API } from "aws-amplify";
 import 'react-toastify/dist/ReactToastify.css';
 import { ToastContainer, toast } from 'react-toastify';
 import { useState } from 'react';
@@ -142,9 +141,9 @@ function App({ signOut, user }) {
       });
       setJobid(result.jobId)
       toast.success("PDF extraction started");
-      setTimeout(() => {  checkJobStatus(); }, 30000);
+      setTimeout(() => { checkJobStatus(); }, 30000);
     }
-    catch(error) {
+    catch (error) {
       console.log("Error starting PDF extraction: ", error);
       toast.warning("Failed to start PDF extraction");
     }
@@ -162,9 +161,9 @@ function App({ signOut, user }) {
       });
       setEjobid(result.job)
       toast.success("Embedding generation started");
-      setTimeout(() => {  checkEJobStatus(); }, 30000);
+      setTimeout(() => { checkEJobStatus(); }, 30000);
     }
-    catch(error) {
+    catch (error) {
       console.log("Error starting embeddings: ", error);
       toast.warning("Failed to start embedding generation");
     }
@@ -190,9 +189,9 @@ function App({ signOut, user }) {
       console.log("Summarization job ID: " + result.job)
       setSjobid(result.job)
       toast.success("Summarization started");
-      setTimeout(() => {  checkSummarizationStatus(result.job); }, 30000);
+      setTimeout(() => { checkSummarizationStatus(result.job); }, 30000);
     }
-    catch(error) {
+    catch (error) {
       console.log("Error starting summarization: ", error);
       toast.warning("Failed to start summarization");
     }
@@ -217,9 +216,9 @@ function App({ signOut, user }) {
       else {
         console.log("Error getting answer: ", result.error);
         toast.warning("Failed to get answer");
-      } 
+      }
     }
-    catch(error) {
+    catch (error) {
       console.log("Error getting answer: ", error);
       toast.warning("Failed to get answer");
     }
@@ -236,148 +235,148 @@ function App({ signOut, user }) {
   function checkJobStatus() {
     Auth.currentCredentials()
       .then(credentials => {
-        const db= new DynamoDB({
+        const db = new DynamoDB({
           region: config.content.REGION,
           credentials: Auth.essentialCredentials(credentials)
         });
-        var params = { 
+        var params = {
           TableName: config.tables.jobtable,
           KeyConditionExpression: '#documentid = :docid',
           ExpressionAttributeNames: {
             "#documentid": "documentId"
           },
           ExpressionAttributeValues: {
-            ":docid": { "S" : docid},
+            ":docid": { "S": docid },
           }
-       };
-        db.query(params, function(err, data) {
-            if (err) {
-              console.log(err);
+        };
+        db.query(params, function (err, data) {
+          if (err) {
+            console.log(err);
             return null;
-            } else {
-        
+          } else {
+
             console.log('Got data');
             console.log(data);
 
             var jobStatus = '';
             for (var i in data['Items']) {
-                // read the values from the dynamodb JSON packet
-                jobStatus = data['Items'][i]['jobStatus']['S'];
-                console.log(jobStatus);        
-                if(jobStatus.includes("SUCCEEDED")) {
-                  setIsJobdone(true);
-                }
+              // read the values from the dynamodb JSON packet
+              jobStatus = data['Items'][i]['jobStatus']['S'];
+              console.log(jobStatus);
+              if (jobStatus.includes("SUCCEEDED")) {
+                setIsJobdone(true);
+              }
             }
-            if(jobStatus.includes("SUCCEEDED")) {
+            if (jobStatus.includes("SUCCEEDED")) {
               console.log("PDF extraction done")
               toast.success("PDF extraction done")
               getOutputPath();
             }
             else {
               toast.info("Checking job status every 30 seconds...")
-              setTimeout(() => {  checkJobStatus(); }, 30000);
+              setTimeout(() => { checkJobStatus(); }, 30000);
             }
-        }     
-      })      
-    });
+          }
+        })
+      });
   }
 
   function checkEJobStatus() {
     Auth.currentCredentials()
       .then(credentials => {
-        const db= new DynamoDB({
+        const db = new DynamoDB({
           region: config.content.REGION,
           credentials: Auth.essentialCredentials(credentials)
         });
-        var params = { 
+        var params = {
           TableName: config.tables.ejobtable,
           KeyConditionExpression: '#documentid = :docid',
           ExpressionAttributeNames: {
             "#documentid": "documentId"
           },
           ExpressionAttributeValues: {
-            ":docid": { "S" : docid},
+            ":docid": { "S": docid },
           }
-       };
-        db.query(params, function(err, data) {
-            if (err) {
-              console.log(err);
+        };
+        db.query(params, function (err, data) {
+          if (err) {
+            console.log(err);
             return null;
-            } else {
-        
+          } else {
+
             console.log('Got data');
             console.log(data);
 
             var jobStatus = '';
             for (var i in data['Items']) {
-                // read the values from the dynamodb JSON packet
-                jobStatus = data['Items'][i]['jobStatus']['S'];
-                console.log(jobStatus);        
-                if(jobStatus.includes("Complete")) {
-                  setIsEjobdone(true);
-                }
+              // read the values from the dynamodb JSON packet
+              jobStatus = data['Items'][i]['jobStatus']['S'];
+              console.log(jobStatus);
+              if (jobStatus.includes("Complete")) {
+                setIsEjobdone(true);
+              }
             }
-            if(jobStatus.includes("Complete")) {
+            if (jobStatus.includes("Complete")) {
               console.log("Embeddings done")
               toast.success("Embedding generation done")
             }
             else {
               toast.info("Checking job status every 30 seconds...")
-              setTimeout(() => {  checkEJobStatus(); }, 30000);
+              setTimeout(() => { checkEJobStatus(); }, 30000);
             }
-        }     
-      })      
-    });
+          }
+        })
+      });
   }
 
   function getOutputPath() {
     Auth.currentCredentials()
-    .then(credentials => {
-      const db= new DynamoDB({
-        region: config.content.REGION,
-        credentials: Auth.essentialCredentials(credentials)
-      });
-      var params = { 
-        TableName: config.tables.outputtable,
-        KeyConditionExpression: '#documentid = :docid AND #outputtype = :otype',
-        ExpressionAttributeNames: {
-          "#documentid": "documentId",
-          "#outputtype": "outputType"
-        },
-        ExpressionAttributeValues: {
-          ":docid": { "S" : docid},
-          ":otype": { "S" : "ResponseOrderedText"}
-        }
-     };
-      db.query(params, function(err, data) {
+      .then(credentials => {
+        const db = new DynamoDB({
+          region: config.content.REGION,
+          credentials: Auth.essentialCredentials(credentials)
+        });
+        var params = {
+          TableName: config.tables.outputtable,
+          KeyConditionExpression: '#documentid = :docid AND #outputtype = :otype',
+          ExpressionAttributeNames: {
+            "#documentid": "documentId",
+            "#outputtype": "outputType"
+          },
+          ExpressionAttributeValues: {
+            ":docid": { "S": docid },
+            ":otype": { "S": "ResponseOrderedText" }
+          }
+        };
+        db.query(params, function (err, data) {
           if (err) {
             console.log(err);
-          return null;
+            return null;
           } else {
-      
-          console.log('Got data');
-          console.log(data);
 
-          for (var i in data['Items']) {
+            console.log('Got data');
+            console.log(data);
+
+            for (var i in data['Items']) {
               // read the values from the dynamodb JSON packet
               var opath = data['Items'][i]['outputPath']['S'];
-              console.log("Output path: " + opath);        
+              console.log("Output path: " + opath);
               setEname(opath);
               downloadExtract(opath);
+            }
           }
-      }     
-    })      
-  });
+        })
+      });
   }
 
   function checkSummarizationStatus(sumjobid) {
     Auth.currentCredentials()
       .then(credentials => {
-        const db= new DynamoDB({
+        const db = new DynamoDB({
           region: config.content.REGION,
           credentials: Auth.essentialCredentials(credentials)
         });
-        var params = { 
+        var params = {
           TableName: config.tables.sumtable,
           KeyConditionExpression: '#documentid = :docid AND #jobid = :jobidvalue',
           ExpressionAttributeNames: {
@@ -385,30 +384,30 @@ function App({ signOut, user }) {
             "#jobid": "jobId"
           },
           ExpressionAttributeValues: {
-            ":docid": { "S" : docid},
-            ":jobidvalue": { "S" : sumjobid},
+            ":docid": { "S": docid },
+            ":jobidvalue": { "S": sumjobid },
           }
-       };
-        db.query(params, function(err, data) {
-            if (err) {
-              console.log(err);
+        };
+        db.query(params, function (err, data) {
+          if (err) {
+            console.log(err);
             return null;
-            } else {
-        
+          } else {
+
             console.log('Got data');
             console.log(data);
 
             var jobStatus = '';
             for (var i in data['Items']) {
-                // read the values from the dynamodb JSON packet
-                jobStatus = data['Items'][i]['jobStatus']['S'];
-                console.log(jobStatus);        
-                if (jobStatus.includes("Complete")) {
-                  var stext = data['Items'][i]['summaryText']['S'];
-                  console.log("Summary: " + stext)
-                  setSummaryText(stext);
-                  setIsSjobdone(true);
-                }
+              // read the values from the dynamodb JSON packet
+              jobStatus = data['Items'][i]['jobStatus']['S'];
+              console.log(jobStatus);
+              if (jobStatus.includes("Complete")) {
+                var stext = data['Items'][i]['summaryText']['S'];
+                console.log("Summary: " + stext)
+                setSummaryText(stext);
+                setIsSjobdone(true);
+              }
             }
             if (jobStatus.includes("Complete")) {
               console.log("Summarization done")
@@ -416,11 +415,11 @@ function App({ signOut, user }) {
             }
             else {
               toast.info("Checking job status every 30 seconds...")
-              setTimeout(() => {  checkSummarizationStatus(sumjobid); }, 30000);
+              setTimeout(() => { checkSummarizationStatus(sumjobid); }, 30000);
             }
-        }     
-      })      
-    });
+          }
+        })
+      });
   }
 
   function changeQaq(e) {
@@ -452,117 +451,117 @@ function App({ signOut, user }) {
     <Container fluid>
       <Row className="vh-100 px-0">
         <Col xs={2} lg={3} className="sidebar">
-        <Stack gap={3}>
-          <div>
-            <img src={logo} className="App-MainLogo" alt="logo" />
-          </div>
-          <div>
-            <p>This application lets you upload a PDF, convert it to text, summarize it, and ask questions about it.</p>
-          </div>
-          <div>
-          Upload file: <input type="file" onChange={uploadFile} disabled = {docid !== ''} id="docpicker" accept=".pdf" />
-          </div>
-          <div>
-          Document id: {docid}
-          </div>
-          <div>
-          <ToastContainer />
-          <button onClick={startOver}>Start over</button>
-          <button onClick={signOut}>Sign out</button>
-          </div>
-        </Stack>
+          <Stack gap={3}>
+            <div>
+              <img src={logo} className="App-MainLogo" alt="logo" />
+            </div>
+            <div>
+              <p>This application lets you upload a PDF, convert it to text, summarize it, and ask questions about it.</p>
+            </div>
+            <div>
+              Upload file: <input type="file" onChange={uploadFile} disabled={docid !== ''} id="docpicker" accept=".pdf" />
+            </div>
+            <div>
+              Document id: {docid}
+            </div>
+            <div>
+              <ToastContainer />
+              <button onClick={startOver}>Start over</button>
+              <button onClick={signOut}>Sign out</button>
+            </div>
+          </Stack>
         </Col>
         <Col className="mainpanel">
-        <Stack gap={3}>
-        <div>
-          <button onClick={pdf2txt} disabled={docid.length === 0 || jobid.length !== 0} className="mainbtn">Convert to text</button>
-          <p>Extraction job id: {jobid}</p>
-          {dname !== '' &&
-            <a href={dname} target="_blank" rel='noreferrer'>Download summary</a>
-          }
-          <br></br>
-          <button onClick={genembed} disabled={docid.length === 0 || ejobid.length !== 0 || isJobdone === false} className="mainbtn">Generate embeddings</button>
-          <p>Embedding job id: {ejobid}</p>
-        </div>
-        <div>
-          <Button
-            onClick={() => setOpen(!open)}
-            aria-controls="example-collapse-text"
-            aria-expanded={open}
-          >
-              Advanced options
-          </Button>
-          <br></br>
-          <Collapse in={open}>
-            <div id="example-collapse-text">
-              <label>Chunk size (between 1000 and 10000):
-                <input type="number" id="chunksize" name="chunksize" min="1000" max="10000" value={chunkSize} onChange={changeChunkSize}/>
-              </label>
-              <br></br>
-              <label>Chunk overlap (between 50 and 1000):
-                <input type="number" id="chunkoverlap" name="chunkoverlap" min="50" max="1000" value={chunkOverlap} onChange={changeChunkOverlap}/>
-              </label>
-              <br></br>
-              <label>Max output length (between 50 and 10000)):
-                <input type="number" id="maxlength" name="maxlength" min="50" max="10000" value={maxLength} onChange={changeMaxLength}/>
-              </label>
-              <br></br>
-              <label>Temperature (between 0 and 1)):
-                <input type="number" id="temperature" name="temperature" min="0" max="1" value={temperature} onChange={changeTemperature} step="0.01"/>
-              </label>
-              <br></br>
-              <label>Top-p (between 0 and 1)):
-                <input type="number" id="topp" name="topp" min="0" max="1" value={topP} onChange={changeTopP} step="0.01"/>
-              </label>
-              <br></br>
-              <label>Top-k (between 0 and 1000)):
-                <input type="number" id="topk" name="topk" min="0" max="1000" value={topK} onChange={changeTopK}/> 
-              </label>
-              <br></br>
-              <label>Num beams (between 0 and 10)):
-                <input type="number" id="numbeams" name="numbeams" min="0" max="10" value={numBeams} onChange={changeNumBeams}/> 
-              </label>
-            </div>
-          </Collapse>
-        </div>
-        <div>
-          <h3>Question answering</h3>
-          <Button
-            onClick={() => setOpenqa(!openqa)}
-            aria-controls="example-collapse-text"
-            aria-expanded={openqa}
-          >
-             Expand
-          </Button>
-          <br></br>
-          <Collapse in={openqa}>
+          <Stack gap={3}>
             <div>
-              <textarea readOnly={false} value={qaQ} className='qaOutput' onChange={changeQaq}></textarea>
-              <br></br><button onClick={getanswer} disabled={isEjobdone === false} className='mainbtn'>Ask</button>
+              <button onClick={pdf2txt} disabled={docid.length === 0 || jobid.length !== 0} className="mainbtn">Convert to text</button>
+              <p>Extraction job id: {jobid}</p>
+              {dname !== '' &&
+                <a href={dname} target="_blank" rel='noreferrer'>Download summary</a>
+              }
               <br></br>
-              <textarea readOnly={true} className='qaOutput' value={qaA}></textarea>
+              <button onClick={genembed} disabled={docid.length === 0 || ejobid.length !== 0 || isJobdone === false} className="mainbtn">Generate embeddings</button>
+              <p>Embedding job id: {ejobid}</p>
             </div>
-          </Collapse>
-        </div>
-        <div>
-          <h3>Summary</h3>
-          <Button
-            onClick={() => setOpensum(!opensum)}
-            aria-controls="example-collapse-text"
-            aria-expanded={opensum}
-          >
-             Expand 
-          </Button>
-          <br></br>
-          <Collapse in={opensum}>
             <div>
-              <br></br><button onClick={summarize} disabled={isJobdone === false || sjobid.length !== 0} className='mainbtn'>Summarize</button>
-              <p>Summarization job id: {sjobid}</p>
-              <textarea readOnly={true} className='summaryOutput' value={summaryText}></textarea>
+              <Button
+                onClick={() => setOpen(!open)}
+                aria-controls="example-collapse-text"
+                aria-expanded={open}
+              >
+                Advanced options
+              </Button>
+              <br></br>
+              <Collapse in={open}>
+                <div id="example-collapse-text">
+                  <label>Chunk size (between 1000 and 10000):
+                    <input type="number" id="chunksize" name="chunksize" min="1000" max="10000" value={chunkSize} onChange={changeChunkSize} />
+                  </label>
+                  <br></br>
+                  <label>Chunk overlap (between 50 and 1000):
+                    <input type="number" id="chunkoverlap" name="chunkoverlap" min="50" max="1000" value={chunkOverlap} onChange={changeChunkOverlap} />
+                  </label>
+                  <br></br>
+                  <label>Max output length (between 50 and 10000)):
+                    <input type="number" id="maxlength" name="maxlength" min="50" max="10000" value={maxLength} onChange={changeMaxLength} />
+                  </label>
+                  <br></br>
+                  <label>Temperature (between 0 and 1)):
+                    <input type="number" id="temperature" name="temperature" min="0" max="1" value={temperature} onChange={changeTemperature} step="0.01" />
+                  </label>
+                  <br></br>
+                  <label>Top-p (between 0 and 1)):
+                    <input type="number" id="topp" name="topp" min="0" max="1" value={topP} onChange={changeTopP} step="0.01" />
+                  </label>
+                  <br></br>
+                  <label>Top-k (between 0 and 1000)):
+                    <input type="number" id="topk" name="topk" min="0" max="1000" value={topK} onChange={changeTopK} />
+                  </label>
+                  <br></br>
+                  <label>Num beams (between 0 and 10)):
+                    <input type="number" id="numbeams" name="numbeams" min="0" max="10" value={numBeams} onChange={changeNumBeams} />
+                  </label>
+                </div>
+              </Collapse>
             </div>
-          </Collapse>
-        </div>
-        </Stack>
+            <div>
+              <h3>Question answering</h3>
+              <Button
+                onClick={() => setOpenqa(!openqa)}
+                aria-controls="example-collapse-text"
+                aria-expanded={openqa}
+              >
+                Expand
+              </Button>
+              <br></br>
+              <Collapse in={openqa}>
+                <div>
+                  <textarea readOnly={false} value={qaQ} className='qaOutput' onChange={changeQaq}></textarea>
+                  <br></br><button onClick={getanswer} disabled={isEjobdone === false} className='mainbtn'>Ask</button>
+                  <br></br>
+                  <textarea readOnly={true} className='qaOutput' value={qaA}></textarea>
+                </div>
+              </Collapse>
+            </div>
+            <div>
+              <h3>Summary</h3>
+              <Button
+                onClick={() => setOpensum(!opensum)}
+                aria-controls="example-collapse-text"
+                aria-expanded={opensum}
+              >
+                Expand
+              </Button>
+              <br></br>
+              <Collapse in={opensum}>
+                <div>
+                  <br></br><button onClick={summarize} disabled={isJobdone === false || sjobid.length !== 0} className='mainbtn'>Summarize</button>
+                  <p>Summarization job id: {sjobid}</p>
+                  <textarea readOnly={true} className='summaryOutput' value={summaryText}></textarea>
+                </div>
+              </Collapse>
+            </div>
+          </Stack>
         </Col>
       </Row>
     </Container>
