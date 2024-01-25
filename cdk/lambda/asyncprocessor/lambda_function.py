@@ -11,6 +11,13 @@ def processRequest(documentId, bucketName, objectName, snsRole, snsTopic):
 
     print("Starting job with documentId: {}, bucketName: {}, objectName: {}".format(documentId, bucketName, objectName))
 
+    # retrieve document information from database
+    # document = getDocumentInfo(documentId)
+    # print(f"Retrieved document info: {document}")
+    # if document is None:
+    #     raise Exception(f"Document {documentId} not found")
+    
+    # start textract job
     response = None
     client = AwsHelper().getClient('textract')
     response = client.start_document_text_detection(
@@ -28,9 +35,7 @@ def processRequest(documentId, bucketName, objectName, snsRole, snsTopic):
         JobTag = documentId
     )
 
-    return response["JobId"]
-
-
+    return response["JobId"]    
 
 def respond(err, res=None):
     return {

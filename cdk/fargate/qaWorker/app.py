@@ -73,11 +73,11 @@ def answerquestion():
         }
 
     print("Task starting")
-    endpoint_embed = os.environ['endpoint_embed']
+    endpoint_embed = os.environ['EMBED_ENDPOINT']
     print(f"Endpoint: {endpoint_embed}")
-    endpoint_qa = os.environ['endpoint_qa']
+    endpoint_qa = os.environ['QA_ENDPOINT']
     print(f"Endpoint: {endpoint_qa}")
-    mntpnt = os.environ['mountpoint']
+    mntpnt = os.environ['MOUNTPOINT']
     print(f"name: {mntpnt}")
     docId = body_data['docId']
     print(f"docId: {docId}")

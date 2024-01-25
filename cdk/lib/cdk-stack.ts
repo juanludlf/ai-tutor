@@ -4,7 +4,6 @@
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs/lib";
 import iam = require("aws-cdk-lib/aws-iam");
-import { ObjectOwnership } from "aws-cdk-lib/aws-s3";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import sns = require("aws-cdk-lib/aws-sns");
 import snsSubscriptions = require("aws-cdk-lib/aws-sns-subscriptions");
@@ -20,24 +19,31 @@ import origins = require("aws-cdk-lib/aws-cloudfront-origins");
 import logs = require("aws-cdk-lib/aws-logs");
 import efs = require("aws-cdk-lib/aws-efs");
 import elb = require("aws-cdk-lib/aws-elasticloadbalancingv2");
-import kms = require("aws-cdk-lib/aws-kms");
-import ssm = require("aws-cdk-lib/aws-ssm");
-import wafv2 = require("aws-cdk-lib/aws-wafv2");
 
-export class CdkStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+interface Props extends cdk.StackProps {
+  readonly stage: string;
+  readonly s3ContentBucketName: string;
+}
+
+export class WuolahAiTutorStack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props: Props) {
     super(scope, id, props);
 
-    const key = new kms.Key(this, "KmsKey", {
-      enableKeyRotation: true,
-    });
+    //**********SageMaker Endpoints*********************
+    const endpointSum = this.node.tryGetContext("sumEndpoint");
+    const endpointEmbed = this.node.tryGetContext("embedEndpoint");
+    const endpointQa = this.node.tryGetContext("qaEndpoint");
 
     //**********SNS Topics******************************
+
+    // Creamos un topic para notificar la finalización de los trabajos
     const jobCompletionTopic = new sns.Topic(this, "JobCompletion", {
-      masterKey: key,
+      topicName: `${props.stage}-wuolah-ai-tutor-job-completion-topic`,
     });
 
     //**********IAM Roles******************************
+
+    // Creamos un rol para el servicio de Textract
     const textractServiceRole = new iam.Role(this, "TextractServiceRole", {
       assumedBy: new iam.ServicePrincipal("textract.amazonaws.com"),
     });
@@ -48,45 +54,23 @@ export class CdkStack extends cdk.Stack {
         actions: ["sns:Publish"],
       })
     );
-    textractServiceRole.addToPolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        resources: [key.keyArn],
-        actions: ["kms:GenerateDataKey", "kms:Decrypt"],
-      })
-    );
 
     //**********S3 Bucket******************************
-    const corsRule: s3.CorsRule = {
-      allowedMethods: [
-        s3.HttpMethods.GET,
-        s3.HttpMethods.HEAD,
-        s3.HttpMethods.PUT,
-        s3.HttpMethods.POST,
-        s3.HttpMethods.DELETE,
-      ],
-      allowedOrigins: ["*"],
 
-      // the properties below are optional
-      allowedHeaders: ["*"],
-      exposedHeaders: [
-        "x-amz-server-side-encryption",
-        "x-amz-request-id",
-        "x-amz-id-2",
-        "ETag",
-      ],
-      maxAge: 3000,
-    };
-    const contentBucket = new s3.Bucket(this, "DocumentsBucket", {
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      versioned: false,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-      cors: [corsRule],
-      serverAccessLogsPrefix: "accesslogs",
-      enforceSSL: true,
-      objectOwnership: ObjectOwnership.BUCKET_OWNER_PREFERRED,
-    });
+    // Importamos el bucket de almacenamiento de documentos de wuolah
+    const contentBucket = s3.Bucket.fromBucketName(
+      this,
+      "DocumentsBucket",
+      props.s3ContentBucketName
+    );
+    const contentBucketResource = contentBucket.node.findChild(
+      "Resource"
+    ) as cdk.CfnResource;
+    contentBucketResource.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+
+    // Creamos el bucket de alojamiento de la aplicación
     const appBucket = new s3.Bucket(this, "AppBucket", {
+      bucketName: `${props.stage}-wuolah-ai-tutor-app-bucket`,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       serverAccessLogsPrefix: "accesslogs",
@@ -95,71 +79,86 @@ export class CdkStack extends cdk.Stack {
     });
 
     //**********DynamoDB Table*************************
-    //DynamoDB table with textract output link
+
+    // DynamoDB table with textract output link
     // Fields = document, output type, s3 location
     const outputTable = new dynamodb.Table(this, "OutputTable", {
+      tableName: `${props.stage}-wuolah-ai-tutor-output`,
       partitionKey: { name: "documentId", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "outputType", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      pointInTimeRecovery: true,
+      pointInTimeRecovery: false,
     });
 
-    //DynamoDB table with job status info.
+    // DynamoDB table with job status info.
     // Fields = document id, job id, status, s3 location
     const documentsTable = new dynamodb.Table(this, "JobTable", {
+      tableName: `${props.stage}-wuolah-ai-tutor-job`,
       partitionKey: { name: "documentId", type: dynamodb.AttributeType.STRING },
-      pointInTimeRecovery: true,
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecovery: false,
     });
 
     // DynamoDB table with summarization job info.
     // Fields = document id, job id, status, summary text
     const summarizationTable = new dynamodb.Table(this, "SummarizationTable", {
+      tableName: `${props.stage}-wuolah-ai-tutor-summarization`,
       partitionKey: { name: "documentId", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "jobId", type: dynamodb.AttributeType.STRING },
-      pointInTimeRecovery: true,
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecovery: false,
     });
 
     // Table with embedding job info
     // Fields = document id, job id, status
     const embeddingTable = new dynamodb.Table(this, "EmbeddingTable", {
+      tableName: `${props.stage}-wuolah-ai-tutor-embedding`,
       partitionKey: { name: "documentId", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "jobId", type: dynamodb.AttributeType.STRING },
-      pointInTimeRecovery: true,
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecovery: false,
     });
 
     //**********SQS Queues*****************************
-    //DLQ
+
+    // Creamos una dead letter queue
     const dlq = new sqs.Queue(this, "DLQ", {
+      queueName: `${props.stage}-wuolah-ai-tutor-dlq`,
       visibilityTimeout: cdk.Duration.seconds(30),
       retentionPeriod: cdk.Duration.seconds(1209600),
       enforceSSL: true,
     });
 
-    //Queues
+    // Creamos una cola para el procesamiento de los trabajos de extracción de texto
     const jobResultsQueue = new sqs.Queue(this, "JobResults", {
+      queueName: `${props.stage}-wuolah-ai-tutor-job-results-queue`,
       visibilityTimeout: cdk.Duration.seconds(900),
       retentionPeriod: cdk.Duration.seconds(1209600),
       deadLetterQueue: { queue: dlq, maxReceiveCount: 50 },
       enforceSSL: true,
     });
-    //Trigger
+
+    // Suscribimos la cola de resultados de los trabajos al topic de trabajos completados
     jobCompletionTopic.addSubscription(
       new snsSubscriptions.SqsSubscription(jobResultsQueue)
     );
+
+    // Creamos una cola para el procesamiento de los resúmenes
     const summarizationResultsQueue = new sqs.Queue(
       this,
       "SummarizationResults",
       {
+        queueName: `${props.stage}-wuolah-ai-tutor-summarization-results-queue`,
         visibilityTimeout: cdk.Duration.seconds(900),
         enforceSSL: true,
         retentionPeriod: cdk.Duration.seconds(1209600),
         deadLetterQueue: { queue: dlq, maxReceiveCount: 50 },
       }
     );
+
+    // Creamos una cola para el procesamiento de los embeddings
     const embeddingQueue = new sqs.Queue(this, "EmbeddingQueue", {
+      queueName: `${props.stage}-wuolah-ai-tutor-embedding-queue`,
       visibilityTimeout: cdk.Duration.seconds(900),
       enforceSSL: true,
       retentionPeriod: cdk.Duration.seconds(1209600),
@@ -168,25 +167,27 @@ export class CdkStack extends cdk.Stack {
 
     //**********Lambda Functions******************************
 
-    // Helper Layer with helper functions
+    // Creamos una layer con funciones de ayuda
     const helperLayer = new lambda.LayerVersion(this, "HelperLayer", {
+      layerVersionName: `${props.stage}-wuolah-ai-tutor-helper-layer`,
       code: lambda.Code.fromAsset("lambda/helper"),
       compatibleRuntimes: [lambda.Runtime.PYTHON_3_9],
       license: "Apache-2.0",
       description: "Helper layer.",
     });
 
-    // Textractor helper layer
+    // Creamos una layer con utilidades de Textract
     const textractorLayer = new lambda.LayerVersion(this, "Textractor", {
+      layerVersionName: `${props.stage}-wuolah-ai-tutor-textractor-layer`,
       code: lambda.Code.fromAsset("lambda/textractor"),
       compatibleRuntimes: [lambda.Runtime.PYTHON_3_9],
       license: "Apache-2.0",
       description: "Textractor layer.",
     });
 
-    //------------------------------------------------------------
     // Async Job Processor (Start jobs using Async APIs)
     const asyncProcessor = new lambda.Function(this, "ASyncProcessor", {
+      functionName: `${props.stage}-wuolah-ai-tutor-async-processor`,
       runtime: lambda.Runtime.PYTHON_3_9,
       code: lambda.Code.fromAsset("lambda/asyncprocessor"),
       handler: "lambda_function.lambda_handler",
@@ -201,10 +202,10 @@ export class CdkStack extends cdk.Stack {
       },
     });
 
-    //Layer
+    // Añadimos la capa de funciones de ayuda
     asyncProcessor.addLayers(helperLayer);
 
-    //Permissions
+    // Permisos
     contentBucket.grantRead(asyncProcessor);
     outputTable.grantReadWriteData(asyncProcessor);
     documentsTable.grantReadWriteData(asyncProcessor);
@@ -222,8 +223,9 @@ export class CdkStack extends cdk.Stack {
     );
     //------------------------------------------------------------
 
-    // Async Jobs Results Processor
+    // Async Jobs Results Processor (actualiza el estado del job en DynamoDB y sube los resultados a S3)
     const jobResultProcessor = new lambda.Function(this, "JobResultProcessor", {
+      functionName: `${props.stage}-wuolah-ai-tutor-job-result-processor`,
       runtime: lambda.Runtime.PYTHON_3_9,
       code: lambda.Code.fromAsset("lambda/jobresultprocessor"),
       handler: "lambda_function.lambda_handler",
@@ -236,16 +238,19 @@ export class CdkStack extends cdk.Stack {
         DOCUMENTS_TABLE: documentsTable.tableName,
       },
     });
-    //Layer
+
+    // Añadimos las capas de funciones de ayuda y Textract
     jobResultProcessor.addLayers(helperLayer);
     jobResultProcessor.addLayers(textractorLayer);
-    //Triggers
+
+    // Suscribimos la lambda a la cola de resultados de los trabajos
     jobResultProcessor.addEventSource(
       new SqsEventSource(jobResultsQueue, {
         batchSize: 1,
       })
     );
-    //Permissions
+
+    // Configuramos los permisos
     outputTable.grantReadWriteData(jobResultProcessor);
     documentsTable.grantReadWriteData(jobResultProcessor);
     contentBucket.grantReadWrite(jobResultProcessor);
@@ -261,11 +266,12 @@ export class CdkStack extends cdk.Stack {
 
     //------------------------------------------------------------
 
-    // Summarization handler
+    // Creamos una lambda para el procesamiento de resúmenes
     const summarizationProcessor = new lambda.Function(
       this,
       "SummarizationProcessor",
       {
+        functionName: `${props.stage}-wuolah-ai-tutor-summarization-processor`,
         runtime: lambda.Runtime.PYTHON_3_9,
         code: lambda.Code.fromAsset("lambda/summarizationprocessor"),
         handler: "lambda_function.lambda_handler",
@@ -277,12 +283,19 @@ export class CdkStack extends cdk.Stack {
         },
       }
     );
+
+    // Añadimos la capa de funciones de ayuda
     summarizationProcessor.addLayers(helperLayer);
+
+    // Configuramos los permisos
     summarizationResultsQueue.grantSendMessages(summarizationProcessor);
     summarizationTable.grantReadWriteData(summarizationProcessor);
 
-    // Embedding handler
+    //------------------------------------------------------------
+
+    // Creamos una lambda para el procesamiento de embeddings
     const embeddingProcessor = new lambda.Function(this, "EmbeddingProcessor", {
+      functionName: `${props.stage}-wuolah-ai-tutor-embedding-processor`,
       runtime: lambda.Runtime.PYTHON_3_9,
       code: lambda.Code.fromAsset("lambda/embeddingprocessor"),
       handler: "lambda_function.lambda_handler",
@@ -293,45 +306,21 @@ export class CdkStack extends cdk.Stack {
         JOB_TABLE: embeddingTable.tableName,
       },
     });
+
+    // Se añade la capa de funciones de ayuda
     embeddingProcessor.addLayers(helperLayer);
+
+    // Configuramos los permisos
     embeddingQueue.grantSendMessages(embeddingProcessor);
     embeddingTable.grantReadWriteData(embeddingProcessor);
 
     //**********API Gateway******************************
+
+    // Creamos el log group para la API
     const prdLogGroup = new logs.LogGroup(this, "PrdLogs");
-    const cfnWebACLApi = new wafv2.CfnWebACL(this, "WebAclApi", {
-      defaultAction: {
-        allow: {},
-      },
-      scope: "REGIONAL",
-      visibilityConfig: {
-        cloudWatchMetricsEnabled: true,
-        metricName: "MetricForWebACLCDKApi",
-        sampledRequestsEnabled: true,
-      },
-      name: "CdkWebAclApi",
-      rules: [
-        {
-          name: "CRSRule",
-          priority: 0,
-          statement: {
-            managedRuleGroupStatement: {
-              name: "AWSManagedRulesCommonRuleSet",
-              vendorName: "AWS",
-            },
-          },
-          visibilityConfig: {
-            cloudWatchMetricsEnabled: true,
-            metricName: "MetricForWebACLCDK-CRS-Api",
-            sampledRequestsEnabled: true,
-          },
-          overrideAction: {
-            none: {},
-          },
-        },
-      ],
-    });
-    const api = new apigw.RestApi(this, "sum-qa-api", {
+
+    // Creamos la API
+    const api = new apigw.RestApi(this, "wuolah-sum-qa-api", {
       defaultCorsPreflightOptions: {
         allowOrigins: apigw.Cors.ALL_ORIGINS,
         allowMethods: apigw.Cors.ALL_METHODS,
@@ -347,66 +336,72 @@ export class CdkStack extends cdk.Stack {
       },
       cloudWatchRole: true,
     });
-    const cfnWebACLAssociation = new wafv2.CfnWebACLAssociation(
-      this,
-      "ApiCDKWebACLAssociation",
-      {
-        resourceArn: api.deploymentStage.stageArn,
-        webAclArn: cfnWebACLApi.attrArn,
-      }
-    );
+
+    // Creamos el endpoint para la extracción de texto del documento
     const documentResource = api.root.addResource("doctopdf");
     const pdfToText = new apigw.LambdaIntegration(asyncProcessor);
-    documentResource.addMethod("POST", pdfToText, {
-      authorizationType: apigw.AuthorizationType.IAM,
-    });
+    documentResource.addMethod("POST", pdfToText);
+
+    // Creamos el endpoint para obtener el resumen del documento
     const summarizeResource = api.root.addResource("summarize");
     const summarizeIntegration = new apigw.LambdaIntegration(
       summarizationProcessor
     );
-    summarizeResource.addMethod("POST", summarizeIntegration, {
-      authorizationType: apigw.AuthorizationType.IAM,
-    });
+    summarizeResource.addMethod("POST", summarizeIntegration);
+
+    // Creamos el endpoint para obtener los text embeddings del documento
     const embeddingResource = api.root.addResource("embed");
     const embeddingIntegration = new apigw.LambdaIntegration(
       embeddingProcessor
     );
-    embeddingResource.addMethod("POST", embeddingIntegration, {
-      authorizationType: apigw.AuthorizationType.IAM,
-    });
+    embeddingResource.addMethod("POST", embeddingIntegration);
+
+    // qa endpoint
     const qaResource = api.root.addResource("qa");
 
     //**********Fargate tasks******************************
 
+    // Creamos una red privada virtual
     const vpc = new ec2.Vpc(this, "VPC", {
-      gatewayEndpoints: {
-        S3: {
-          service: ec2.GatewayVpcEndpointAwsService.S3,
-        },
-      },
+      vpcName: "wuolah-ai-tutor-vpc",
     });
-    vpc.addFlowLog("FlowLogS3", {
-      destination: ec2.FlowLogDestination.toS3(contentBucket, "flowlogs/"),
+
+    // Otorgamos acceso a S3 sin pasar por internet o NAT gateways
+    vpc.addGatewayEndpoint("S3Endpoint", {
+      service: ec2.GatewayVpcEndpointAwsService.S3,
     });
+
+    // Otorgamos acceso a Docker Registry APIs sin pasar por internet o NAT gateways
     vpc.addInterfaceEndpoint("EcrDockerEndpoint", {
       service: ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
     });
+
+    // Otorgamos acceso al servicio KMS sin sin pasar por internet o NAT gateways
     vpc.addInterfaceEndpoint("KmsEndpoint", {
       service: ec2.InterfaceVpcEndpointAwsService.KMS,
     });
-    const endpointSum = this.node.tryGetContext("sumEndpoint");
-    const endpointEmbed = this.node.tryGetContext("embedEndpoint");
+
+    // Otorgamos acceso a Cloudwatch logging sin pasar por internet o NAT gateways
+    vpc.addInterfaceEndpoint("CloudWatchEndpoint", {
+      service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+    });
+
+    //**********ECS Cluster******************************
+
+    // Creamos el Cluster de ECS, tipo Fargate
     const cluster = new ecs.Cluster(this, "Cluster", {
       vpc,
       enableFargateCapacityProviders: true,
-      containerInsights: true,
+      containerInsights: false,
     });
+
+    // Creamos la Task Definition para el worker de resúmenes
     const fargateTaskDefinition = new ecs.FargateTaskDefinition(
       this,
       "SummarizationWorkerTask",
       {
-        memoryLimitMiB: 61440,
-        cpu: 8192,
+        memoryLimitMiB: 30720,
+        cpu: 4096,
         ephemeralStorageGiB: 200,
         // Uncomment this section if running on ARM
         // runtimePlatform: {
@@ -414,6 +409,8 @@ export class CdkStack extends cdk.Stack {
         // }
       }
     );
+
+    // Permisos
     fargateTaskDefinition.grantRun(summarizationProcessor);
     contentBucket.grantRead(fargateTaskDefinition.taskRole);
     summarizationTable.grantReadWriteData(fargateTaskDefinition.taskRole);
@@ -430,45 +427,31 @@ export class CdkStack extends cdk.Stack {
         ],
       })
     );
-    const regionParam = new ssm.StringParameter(this, "RegionParameter", {
-      parameterName: "RegionParameter",
-      stringValue: this.region,
-      tier: ssm.ParameterTier.ADVANCED,
-    });
-    const endpointSumParam = new ssm.StringParameter(
-      this,
-      "EndpointSumParameter",
-      {
-        parameterName: "EndpointSumParameter",
-        stringValue: endpointSum,
-        tier: ssm.ParameterTier.ADVANCED,
-      }
-    );
-    const sumTableParam = new ssm.StringParameter(this, "SumTableParameter", {
-      parameterName: "SumTableParameter",
-      stringValue: summarizationTable.tableName,
-      tier: ssm.ParameterTier.ADVANCED,
-    });
+
+    // Definición del contenedor
     fargateTaskDefinition.addContainer("worker", {
+      containerName: `${props.stage}-wuolah-ai-tutor-summarization-worker-container`,
       image: ecs.ContainerImage.fromAsset("fargate/summarizationworker"),
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "summarization-log-group",
         logRetention: 30,
       }),
-      secrets: {
-        endpoint: ecs.Secret.fromSsmParameter(endpointSumParam),
-        table: ecs.Secret.fromSsmParameter(sumTableParam),
-        region: ecs.Secret.fromSsmParameter(regionParam),
+      environment: {
+        SUMMARIZATION_ENDPOINT: endpointSum,
+        SUMMARIZATION_TABLE: summarizationTable.tableName,
+        AWS_REGION: this.region,
       },
     });
 
     //**********ECS task launcher******************************
+
+    // Listado de subnets de la vpc
     const subnetIds: string[] = [];
     vpc.privateSubnets.forEach((subnet) => {
       subnetIds.push(subnet.subnetId);
     });
 
-    // Summarization worker - fires ECS task
+    // Creamos función de lambda para disparar la tarea ECS del summarization worker
     const taskProcessor = new lambda.Function(this, "TaskProcessor", {
       runtime: lambda.Runtime.PYTHON_3_9,
       code: lambda.Code.fromAsset("lambda/taskprocessor"),
@@ -482,13 +465,13 @@ export class CdkStack extends cdk.Stack {
         subnets: subnetIds.join(","),
       },
     });
-    //Triggers
+    // Suscribimos la lambda a la cola de procesamiento de resúmenes
     taskProcessor.addEventSource(
       new SqsEventSource(summarizationResultsQueue, {
         batchSize: 1,
       })
     );
-    //Permissions
+    // Configuramos los permisos
     taskProcessor.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["ecs:RunTask"],
@@ -503,7 +486,9 @@ export class CdkStack extends cdk.Stack {
     );
 
     //**********EFS*************************
+
     const fileSystem = new efs.FileSystem(this, "ChromaFileSystem", {
+      fileSystemName: `${props.stage}-wuolah-ai-tutor-efs`,
       vpc: vpc,
       encrypted: true,
       enableAutomaticBackups: true,
@@ -526,7 +511,8 @@ export class CdkStack extends cdk.Stack {
     });
 
     //**********Function that uses EFS*************************
-    const endpointQa = this.node.tryGetContext("qaEndpoint");
+
+    // Creamos la definición de la tarea ECS para el worker de embeddings
     const fargateTaskDefinitionEmbed = new ecs.FargateTaskDefinition(
       this,
       "EmbedWorkerTask",
@@ -540,8 +526,10 @@ export class CdkStack extends cdk.Stack {
         // }
       }
     );
+
+    // Configuramos el volumen de EFS
     const embedVolume = {
-      name: "datavolume",
+      name: `${props.stage}-wuolah-ai-tutor-efs-embed-volume`,
       efsVolumeConfiguration: {
         fileSystemId: fileSystem.fileSystemId,
         transitEncryption: "ENABLED",
@@ -551,7 +539,11 @@ export class CdkStack extends cdk.Stack {
         },
       },
     };
+
+    // Añadimos el volumen a la definición de la tarea
     fargateTaskDefinitionEmbed.addVolume(embedVolume);
+
+    // Configuramos los permisos
     contentBucket.grantRead(fargateTaskDefinitionEmbed.taskRole);
     embeddingTable.grantReadWriteData(fargateTaskDefinitionEmbed.taskRole);
     fargateTaskDefinitionEmbed.taskRole.addToPrincipalPolicy(
@@ -567,47 +559,31 @@ export class CdkStack extends cdk.Stack {
         ],
       })
     );
-    const endpointEmbedParam = new ssm.StringParameter(
-      this,
-      "EndpointEmbedParameter",
-      {
-        parameterName: "EndpointEmbedParameter",
-        stringValue: endpointEmbed,
-        tier: ssm.ParameterTier.ADVANCED,
-      }
-    );
-    const embedTableParam = new ssm.StringParameter(
-      this,
-      "EmbedTableParameter",
-      {
-        parameterName: "EmbedTableParameter",
-        stringValue: embeddingTable.tableName,
-        tier: ssm.ParameterTier.ADVANCED,
-      }
-    );
-    const mountParam = new ssm.StringParameter(this, "MountParameter", {
-      parameterName: "MountParameter",
-      stringValue: "/efs/data",
-      tier: ssm.ParameterTier.ADVANCED,
-    });
+
+    // Creamos el contenedor
     const embedContainer = fargateTaskDefinitionEmbed.addContainer("worker", {
       image: ecs.ContainerImage.fromAsset("fargate/embeddingWorker"),
+      containerName: `${props.stage}-wuolah-ai-tutor-embedding-worker-container`,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "embed-log-group",
         logRetention: 30,
       }),
-      secrets: {
-        endpoint: ecs.Secret.fromSsmParameter(endpointEmbedParam),
-        table: ecs.Secret.fromSsmParameter(embedTableParam),
-        region: ecs.Secret.fromSsmParameter(regionParam),
-        mountpoint: ecs.Secret.fromSsmParameter(mountParam),
+      environment: {
+        EMBED_ENDPOINT: endpointSum,
+        EMBED_TABLE: summarizationTable.tableName,
+        AWS_REGION: this.region,
+        MOUNTPOINT: "/efs/data",
       },
     });
+
+    // Añadimos el volumen al contenedor
     embedContainer.addMountPoints({
       containerPath: "/efs/data",
       readOnly: false,
-      sourceVolume: "datavolume",
+      sourceVolume: `${props.stage}-wuolah-ai-tutor-efs-embed-volume`,
     });
+
+    // Configuramos los permisos
     fargateTaskDefinitionEmbed.addToTaskRolePolicy(
       new iam.PolicyStatement({
         actions: [
@@ -628,6 +604,8 @@ export class CdkStack extends cdk.Stack {
     fileSystem.connections.allowDefaultPortFrom(
       ec2.Peer.ipv4(vpc.vpcCidrBlock)
     );
+
+    // Creamos la función lambda para lanzar la tarea ECS del worker de embeddings
     const embeddingWorker = new lambda.Function(this, "EmbeddingWorker", {
       runtime: lambda.Runtime.PYTHON_3_9,
       code: lambda.Code.fromAsset("lambda/embeddingworker"),
@@ -642,12 +620,15 @@ export class CdkStack extends cdk.Stack {
         subnets: subnetIds.join(","),
       },
     });
-    //Triggers
+
+    // Suscribimos la lambda a la cola de procesamiento de embeddings
     embeddingWorker.addEventSource(
       new SqsEventSource(embeddingQueue, {
         batchSize: 1,
       })
     );
+
+    // Configuramos los permisos
     embeddingWorker.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["ecs:RunTask"],
@@ -662,6 +643,8 @@ export class CdkStack extends cdk.Stack {
     );
 
     //**********ECS Service for QA******************************
+
+    // Creamos la definición de la tarea ECS para el worker de QA
     const fargateTaskDefinitionQa = new ecs.FargateTaskDefinition(
       this,
       "QaWorkerTask",
@@ -675,8 +658,10 @@ export class CdkStack extends cdk.Stack {
         // }
       }
     );
+
+    // Configuramos el volumen de EFS
     const qaVolume = {
-      name: "datavolume",
+      name: `${props.stage}-wuolah-ai-tutor-efs-qa-volume`,
       efsVolumeConfiguration: {
         fileSystemId: fileSystem.fileSystemId,
         transitEncryption: "ENABLED",
@@ -686,7 +671,11 @@ export class CdkStack extends cdk.Stack {
         },
       },
     };
+
+    // Añadimos el volumen a la definición de la tarea
     fargateTaskDefinitionQa.addVolume(qaVolume);
+
+    // Configuramos los permisos
     fargateTaskDefinitionQa.taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         actions: ["sagemaker:InvokeEndpoint"],
@@ -706,18 +695,11 @@ export class CdkStack extends cdk.Stack {
         ],
       })
     );
-    const endpointQaParam = new ssm.StringParameter(
-      this,
-      "EndpointQaParameter",
-      {
-        parameterName: "EndpointQaParameter",
-        stringValue: endpointQa,
-        tier: ssm.ParameterTier.ADVANCED,
-      }
-    );
+
+    // Creamos el contenedor de Q&A
     const qaContainer = fargateTaskDefinitionQa.addContainer("qaworker", {
       image: ecs.ContainerImage.fromAsset("fargate/qaWorker"),
-      containerName: "qaworker",
+      containerName: `${props.stage}-wuolah-ai-tutor-qa-worker-container`,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "qa-log-group",
         logRetention: 30,
@@ -728,18 +710,22 @@ export class CdkStack extends cdk.Stack {
           hostPort: 5000,
         },
       ],
-      secrets: {
-        endpoint_embed: ecs.Secret.fromSsmParameter(endpointEmbedParam),
-        endpoint_qa: ecs.Secret.fromSsmParameter(endpointQaParam),
-        mountpoint: ecs.Secret.fromSsmParameter(mountParam),
+      environment: {
+        EMBED_ENDPOINT: endpointEmbed,
+        QA_ENDPOINT: endpointQa,
+        MOUNTPOINT: "/efs/data",
       },
       essential: true,
     });
+
+    // Añadimos el volumen al contenedor
     qaContainer.addMountPoints({
       containerPath: "/efs/data",
       readOnly: false,
-      sourceVolume: "datavolume",
+      sourceVolume: `${props.stage}-wuolah-ai-tutor-efs-qa-volume`,
     });
+
+    // Configuramos los permisos
     fargateTaskDefinitionQa.addToTaskRolePolicy(
       new iam.PolicyStatement({
         actions: [
@@ -757,12 +743,14 @@ export class CdkStack extends cdk.Stack {
         resources: ["*"],
       })
     );
+
+    // Creamos el security group para el servicio
     const serviceSecurityGroup = new ec2.SecurityGroup(
       this,
       "svcSecurityGroup",
       {
         vpc: vpc,
-        securityGroupName: "svcSecurityGroup",
+        securityGroupName: `${props.stage}-wuolah-ai-tutor-qa-svc-sg`,
       }
     );
     serviceSecurityGroup.addIngressRule(
@@ -770,21 +758,26 @@ export class CdkStack extends cdk.Stack {
       ec2.Port.tcp(5000),
       "Allow inbound traffic from resources in vpc"
     );
+
+    // Creamos el servicio de Q&A
     const qaService = new ecs.FargateService(this, "qaService", {
-      serviceName: "qaService",
+      serviceName: `${props.stage}-wuolah-ai-tutor-qa-service`,
       cluster: cluster,
       desiredCount: 1,
       securityGroups: [serviceSecurityGroup],
       taskDefinition: fargateTaskDefinitionQa,
       healthCheckGracePeriod: cdk.Duration.seconds(300),
     });
+
+    // Creamos el NLB para el servicio de QA
     const qaNLB = new elb.NetworkLoadBalancer(this, "qaNLB", {
-      loadBalancerName: "qaNLB",
+      loadBalancerName: `${props.stage}-wuolah-ai-tutor-qa-nlb`,
       vpc: vpc,
       crossZoneEnabled: true,
       internetFacing: false,
     });
-    qaNLB.logAccessLogs(contentBucket, "nlblog");
+
+    // Creamos el target group para el servicio de QA
     const qaTargetGroup = new elb.NetworkTargetGroup(this, "qaTargetGroup", {
       targetGroupName: "qaTargetGroup",
       vpc: vpc,
@@ -801,6 +794,7 @@ export class CdkStack extends cdk.Stack {
       defaultTargetGroups: [qaTargetGroup],
     });
 
+    // Creamos el endpoint de procesamiento de embeddings
     const link = new apigw.VpcLink(this, "link", {
       targets: [qaNLB],
     });
@@ -812,43 +806,9 @@ export class CdkStack extends cdk.Stack {
         vpcLink: link,
       },
     });
-    qaResource.addMethod("POST", qaIntegration, {
-      authorizationType: apigw.AuthorizationType.IAM,
-    });
+    qaResource.addMethod("POST", qaIntegration);
 
     //**********CloudFront******************************
-    const cfnWebACL = new wafv2.CfnWebACL(this, "WebAcl", {
-      defaultAction: {
-        allow: {},
-      },
-      scope: "CLOUDFRONT",
-      visibilityConfig: {
-        cloudWatchMetricsEnabled: true,
-        metricName: "MetricForWebACLCDK",
-        sampledRequestsEnabled: true,
-      },
-      name: "CdkWebAcl",
-      rules: [
-        {
-          name: "CRSRule",
-          priority: 0,
-          statement: {
-            managedRuleGroupStatement: {
-              name: "AWSManagedRulesCommonRuleSet",
-              vendorName: "AWS",
-            },
-          },
-          visibilityConfig: {
-            cloudWatchMetricsEnabled: true,
-            metricName: "MetricForWebACLCDK-CRS",
-            sampledRequestsEnabled: true,
-          },
-          overrideAction: {
-            none: {},
-          },
-        },
-      ],
-    });
     const distribution = new cloudfront.Distribution(this, "appdist", {
       defaultBehavior: { origin: new origins.S3Origin(appBucket) },
       enableLogging: true,
@@ -857,7 +817,6 @@ export class CdkStack extends cdk.Stack {
       logIncludesCookies: true,
       geoRestriction: cloudfront.GeoRestriction.allowlist("US"),
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
-      webAclId: cfnWebACL.attrArn,
     });
 
     //**********Outputs******************************

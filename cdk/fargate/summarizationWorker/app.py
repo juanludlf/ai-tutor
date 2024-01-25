@@ -88,11 +88,11 @@ class SageMakerLLMFlanT5(LLM):
 def main():
 
     print("Task starting")
-    endpoint_name = os.environ['endpoint']
+    endpoint_name = os.environ['SUMMARIZATION_ENDPOINT']
     print(f"Endpoint: {endpoint_name}")
-    table_name = os.environ['table']
+    table_name = os.environ['SUMMARIZATION_TABLE']
     print(f"Table: {table_name}")
-    region = os.environ['region']
+    region = os.environ['AWS_REGION']
     print(f"Region: {region}")
     docId = os.environ['docId']
     print(f"docId: {docId}")

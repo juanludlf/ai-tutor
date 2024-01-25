@@ -4,13 +4,21 @@
 // #!/usr/bin/env node
 import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
-import { CdkStack } from "../lib/cdk-stack";
+import { WuolahAiTutorStack } from "../lib/cdk-stack";
 import { AwsSolutionsChecks, NagSuppressions } from "cdk-nag";
 import { Aspects } from "aws-cdk-lib";
 
 const app = new cdk.App();
 Aspects.of(app).add(new AwsSolutionsChecks({ verbose: true }));
-const stack = new CdkStack(app, "CdkStack", { env: { region: "eu-west-1" } });
+
+const stack = new WuolahAiTutorStack(app, "WuolahAiTutorStack", {
+  env: {
+    region: "eu-west-1",
+  },
+  stage: "dev",
+  s3ContentBucketName: "wuolah-test",
+});
+
 NagSuppressions.addStackSuppressions(stack, [
   {
     id: "AwsSolutions-COG4",

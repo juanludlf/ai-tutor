@@ -1,10 +1,10 @@
-# Summarization and question answering for financial documents
+# Summarization and question answering for educational documents
 
 This example shows you how to perform summarization and question answering for lengthy financial documents like annual reports to shareholders.
 
 For summarization, we split the document into smaller segments (five-pages by default) and summarize each segment. We use AI21's summarization model, which can handle input sequences up to about 10,000 words.
 
-For question answering we use a technique called retrieval augmented generation, where we provide new information (the contents of the financial document) to a large language model.
+For question answering we use a technique called retrieval augmented generation, where we provide new information (the contents of the educational document) to a large language model.
 
 ## Architecture
 
@@ -15,10 +15,6 @@ The solution starts with a React Javascript application hosted in an S3 bucket f
 When users upload a PDF to S3, they can then start a Textract job to extract text information. When that job completes, the user can then start a summarization job.
 
 The front-end application calls methods on an API Gateway, which invokes Lambda functions for processing. The Lambda functions use SQS queues for asynchronous handling. The summarization job delegates to an ECS Fargate task as it may take several minutes to run. Job state is captured in DynamoDB tables.
-
-## Clone repository
-
-Clone this GitHub repository into a working directory.
 
 ## Deploy SageMaker endpoints
 
@@ -78,7 +74,7 @@ Finally, build and load the React app. Adjust any necessary values in `frontend/
     yarn build
     aws s3 sync build/ s3://<app bucket>
 
-Now you can access the applicaation at:
+Now you can access the application at:
 
     https://`CdkStack.AppUrl`/index.html
 

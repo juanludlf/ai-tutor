@@ -40,11 +40,11 @@ class SMEndpointEmbeddings(BaseModel, Embeddings):
 def main():
 
     print("Task starting")
-    endpoint_name = os.environ['endpoint']
+    endpoint_name = os.environ['EMBED_ENDPOINT']
     print(f"Endpoint: {endpoint_name}")
-    table_name = os.environ['table']
+    table_name = os.environ['EMBED_TABLE']
     print(f"Table: {table_name}")
-    region = os.environ['region']
+    region = os.environ['AWS_REGION']
     print(f"Region: {region}")
     docId = os.environ['docId']
     print(f"docId: {docId}")
@@ -54,7 +54,7 @@ def main():
     print(f"bucket: {bucket}")
     name = os.environ['name']
     print(f"name: {name}")
-    mntpnt = os.environ['mountpoint']
+    mntpnt = os.environ['MOUNTPOINT']
     print(f"name: {mntpnt}")
 
     try:
